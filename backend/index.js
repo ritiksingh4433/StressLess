@@ -22,19 +22,25 @@ const corsOptions = {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
     
-    // Allow localhost and 127.0.0.1 on any port
+    // Production and development origins
     const allowedOrigins = [
+      // Production
+      'https://stress-less-omega.vercel.app',
+      // Development
       /^http:\/\/localhost:\d+$/,
       /^http:\/\/127\.0\.0\.1:\d+$/,
       /^http:\/\/192\.168\.\d+\.\d+:\d+$/,  // Local network
       /^http:\/\/10\.\d+\.\d+\.\d+:\d+$/,   // Local network
     ];
     
-    const isAllowed = allowedOrigins.some(pattern => pattern.test(origin));
+    const isAllowed = allowedOrigins.some(pattern => 
+      typeof pattern === 'string' ? pattern === origin : pattern.test(origin)
+    );
     if (isAllowed) {
       callback(null, true);
     } else {
-      callback(null, true); // Allow all origins for now to fix connectivity issues
+      console.log('CORS blocked origin:', origin);
+      callback(new Error('Not allowed by CORS'));
     }
   },
   credentials: true,
