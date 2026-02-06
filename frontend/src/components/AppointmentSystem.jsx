@@ -57,7 +57,8 @@ const AppointmentSystem = () => {
     if (selectedDoctor && selectedSlot) {
       try {
         if (currentUser && token) {
-          await fetch('http://localhost:5000/api/appointments', {
+          const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+          await fetch(`${API_URL}/appointments`, {
             method: 'POST',
             headers: { 
               'Content-Type': 'application/json',
