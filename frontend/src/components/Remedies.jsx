@@ -45,27 +45,27 @@ const Remedies = ({ onSelectTherapy }) => {
           Therapy-Based Remedies for Stress
         </p>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
           {remedies.map((remedy, index) => (
             <div
               key={index}
-              className={`p-8 rounded-2xl border ${remedy.border} bg-white dark:bg-[#0f172a]/60 backdrop-blur-sm transition hover:scale-[1.03] hover:shadow-lg shadow-sm`}
+              className={`h-full flex flex-col p-6 rounded-2xl border-2 ${remedy.border} bg-white dark:bg-[#0f172a]/60 backdrop-blur-sm transition hover:scale-[1.03] hover:shadow-lg shadow-sm`}
             >
-              <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mx-auto mb-6">
+              <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mx-auto mb-4">
                 {remedy.icon}
               </div>
 
-              <h3 className="text-2xl font-semibold mb-3 text-center text-slate-900 dark:text-white">
+              <h3 className="text-xl font-semibold mb-3 text-center text-slate-900 dark:text-white">
                 {remedy.title}
               </h3>
 
-              <p className="text-slate-600 dark:text-slate-300 text-center mb-6">
+              <p className="text-slate-600 dark:text-slate-300 text-center text-sm flex-grow mb-6 line-clamp-4">
                 {remedy.description}
               </p>
 
               <button
                 onClick={() => onSelectTherapy(remedy.type)}
-                className="w-full py-3 bg-green-500 hover:bg-green-600 rounded-lg text-lg font-medium transition text-white"
+                className="w-full py-3 bg-green-500 hover:bg-green-600 rounded-lg text-base font-semibold transition text-white mt-auto"
               >
                 Explore
               </button>
