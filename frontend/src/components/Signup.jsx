@@ -71,7 +71,7 @@ const Signup = ({ onNavigate, onSignupSuccess }) => {
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               className="w-full bg-slate-100 dark:bg-slate-900/50 border border-slate-300 dark:border-slate-700 rounded-xl py-2.5 pl-10 pr-4 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-yellow-500/50 transition"
-              placeholder="John Doe"
+              placeholder="Enter Your Name"
               required
             />
           </div>

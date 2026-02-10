@@ -56,7 +56,7 @@ const Footer = () => {
 
       <div className="max-w-7xl mx-auto mt-12 pt-8 border-t border-slate-200 dark:border-white/5 flex flex-col md:flex-row justify-between items-center gap-4">
         <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest">
-          &copy; {new Date().getFullYear()} StressLess Assessment. All rights reserved.
+          &copy; {new Date().getFullYear()} StressLess. All rights reserved.
         </p>
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
