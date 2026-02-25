@@ -5,6 +5,7 @@ const { PrismaClient } = require('@prisma/client');
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 const OpenAI = require('openai');
+const bcrypt = require('bcryptjs');
 
 dotenv.config();
 
@@ -113,21 +114,28 @@ app.post('/api/auth/google', async (req, res) => {
   }
 });
 
-// Regular Login with Password (Placeholder for security - normally use bcrypt)
+// Login - only existing users with correct password
 app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
   try {
-    let user = await prisma.user.findUnique({ where: { email } });
-    
-    // If user doesn't exist, we'll create one for this demo (Auto-signup)
-    // In a real app, you would check the password here
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+
+    const user = await prisma.user.findUnique({ where: { email } });
+
     if (!user) {
-      user = await prisma.user.create({
-        data: { 
-          email,
-          displayName: email.split('@')[0]
-        }
-      });
+      return res.status(401).json({ error: 'No account found with this email. Please sign up first.' });
+    }
+
+    // Google-only users don't have a password
+    if (!user.password) {
+      return res.status(401).json({ error: 'This account uses Google Sign-In. Please log in with Google.' });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ error: 'Incorrect password. Please try again.' });
     }
 
     const token = jwt.sign(
@@ -136,18 +144,32 @@ app.post('/api/auth/login', async (req, res) => {
       { expiresIn: '7d' }
     );
 
-    res.json({ token, user });
+    // Don't send password back to frontend
+    const { password: _, ...userWithoutPassword } = user;
+    res.json({ token, user: userWithoutPassword });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Regular Signup
+// Signup - create new account with hashed password
 app.post('/api/auth/signup', async (req, res) => {
-  const { email, displayName } = req.body;
+  const { email, password, displayName } = req.body;
   try {
+    if (!email || !password || !displayName) {
+      return res.status(400).json({ error: 'Email, password, and name are required' });
+    }
+
+    // Check if user already exists
+    const existingUser = await prisma.user.findUnique({ where: { email } });
+    if (existingUser) {
+      return res.status(409).json({ error: 'An account with this email already exists. Please log in.' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
     const user = await prisma.user.create({
-      data: { email, displayName }
+      data: { email, password: hashedPassword, displayName }
     });
 
     const token = jwt.sign(
@@ -156,9 +178,46 @@ app.post('/api/auth/signup', async (req, res) => {
       { expiresIn: '7d' }
     );
 
-    res.json({ token, user });
+    // Don't send password back to frontend
+    const { password: _, ...userWithoutPassword } = user;
+    res.json({ token, user: userWithoutPassword });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// --- USER ROUTES ---
+
+// Get current user (validate token & user still exists)
+app.get('/api/auth/me', authenticateToken, async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json({ user });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update User Profile (age, gender)
+app.put('/api/user/profile', authenticateToken, async (req, res) => {
+  try {
+    const { age, gender } = req.body;
+    const updateData = {};
+    if (age !== undefined) updateData.age = parseInt(age) || null;
+    if (gender !== undefined) updateData.gender = gender || null;
+
+    const user = await prisma.user.update({
+      where: { id: req.user.id },
+      data: updateData,
+    });
+
+    res.json({ user });
+  } catch (error) {
+    console.error('Profile Update Error:', error);
+    res.status(500).json({ error: 'Failed to update profile' });
   }
 });
 
@@ -445,6 +504,139 @@ Generate now:`;
   } catch (error) {
     console.error('AI Analysis Error:', error);
     res.status(500).json({ error: 'Failed to generate AI analysis: ' + (error.message || 'Unknown error') });
+  }
+});
+
+// AI-Powered Personalized Question Generation
+app.post('/api/generate-questions', authenticateToken, async (req, res) => {
+  try {
+    const { userResponse } = req.body;
+
+    if (!userResponse || userResponse.trim().length < 10) {
+      return res.status(400).json({ error: 'Please describe your situation in at least a few sentences.' });
+    }
+
+    if (!process.env.OPENROUTER_API_KEY) {
+      return res.status(500).json({ error: 'OpenRouter API Key not configured' });
+    }
+
+    const completion = await openai.chat.completions.create({
+      model: "stepfun/step-3.5-flash:free",
+      messages: [
+        {
+          role: "system",
+          content: `You are a clinical psychologist designing a personalized stress assessment. You will receive a user's description of their problems. Your job:
+
+1. ANALYZE the user's text to identify their main stress areas among these 3 categories:
+   - medical (health, sleep, fatigue, physical symptoms, burnout)
+   - financial (money, debt, expenses, income, savings, career finances)
+   - relationship (family, friends, loneliness, conflicts, social pressure, trust)
+
+2. DETERMINE which category is the PRIMARY concern (the one they mention most or seems most distressing).
+
+3. GENERATE exactly 15 stress assessment questions following these rules:
+   - The PRIMARY category gets 8 questions
+   - The other two categories get 4 and 3 questions respectively (whichever is more relevant gets 4)
+   - Questions should be PERSONALIZED based on the specific issues the user described
+   - Questions must be answerable on a Never/Rarely/Sometimes/Often/Always scale (0-4)
+   - Questions should start with "Do you..." or "Have you..." 
+   - Questions should be empathetic and non-judgmental
+   - Extract KEYWORDS from the user's description and weave them into questions
+   - Make questions specific to their situation, not generic
+
+4. RESPOND in this exact JSON format (no markdown, no code blocks, just raw JSON):
+{
+  "primaryCategory": "medical|financial|relationship",
+  "keywords": ["keyword1", "keyword2", "keyword3"],
+  "questions": [
+    {"text": "Do you...", "category": "medical"},
+    {"text": "Do you...", "category": "financial"},
+    ...
+  ]
+}
+
+IMPORTANT: Return ONLY valid JSON. No extra text, no explanation, no markdown.`
+        },
+        {
+          role: "user",
+          content: userResponse
+        }
+      ],
+    });
+
+    let responseText = completion.choices[0].message.content.trim();
+    
+    // Clean up response - remove markdown code blocks if present
+    responseText = responseText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+
+    let parsed;
+    try {
+      parsed = JSON.parse(responseText);
+    } catch (parseErr) {
+      console.error('Failed to parse AI response:', responseText);
+      return res.status(500).json({ error: 'AI returned invalid format. Please try again.' });
+    }
+
+    // Validate the response structure
+    if (!parsed.questions || !Array.isArray(parsed.questions) || parsed.questions.length < 10) {
+      return res.status(500).json({ error: 'AI generated insufficient questions. Please try again.' });
+    }
+
+    // Ensure exactly 15 questions and proper categories
+    const validCategories = ['medical', 'financial', 'relationship'];
+    const validQuestions = parsed.questions
+      .filter(q => q.text && q.category && validCategories.includes(q.category))
+      .slice(0, 15);
+
+    if (validQuestions.length < 15) {
+      // Pad with generic questions if AI didn't produce enough
+      const genericFallbacks = {
+        medical: [
+          "Do you feel physically exhausted most days?",
+          "Do you experience trouble sleeping due to stress?",
+          "Do you feel mentally drained during the day?",
+          "Do you experience headaches or body tension?",
+          "Do you feel burnout from daily responsibilities?"
+        ],
+        financial: [
+          "Do you worry about money regularly?",
+          "Do you feel anxious about your financial future?",
+          "Do unexpected expenses cause you significant stress?",
+          "Do financial concerns affect your daily mood?",
+          "Do you feel financially insecure?"
+        ],
+        relationship: [
+          "Do you feel emotionally unsupported by those close to you?",
+          "Do conflicts with others affect your peace of mind?",
+          "Do you feel lonely even around people?",
+          "Do others' expectations cause you stress?",
+          "Do you find it hard to express your feelings?"
+        ]
+      };
+
+      while (validQuestions.length < 15) {
+        for (const cat of validCategories) {
+          if (validQuestions.length >= 15) break;
+          const catQuestions = validQuestions.filter(q => q.category === cat);
+          const fallback = genericFallbacks[cat].find(
+            fb => !validQuestions.some(q => q.text === fb)
+          );
+          if (fallback) {
+            validQuestions.push({ text: fallback, category: cat });
+          }
+        }
+      }
+    }
+
+    res.json({
+      primaryCategory: parsed.primaryCategory || 'medical',
+      keywords: parsed.keywords || [],
+      questions: validQuestions
+    });
+
+  } catch (error) {
+    console.error('Question Generation Error:', error);
+    res.status(500).json({ error: 'Failed to generate questions: ' + (error.message || 'Unknown error') });
   }
 });
 

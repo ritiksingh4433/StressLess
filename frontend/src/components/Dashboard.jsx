@@ -203,8 +203,14 @@ const Dashboard = ({ onViewResult }) => {
           )}
         </div>
         <div className="text-center md:text-left flex-grow">
-          <h2 className="text-4xl font-black text-slate-900 dark:text-white mb-2">{currentUser?.displayName || 'Wellness Seeker'}</h2>
-          <p className="text-slate-500 dark:text-slate-400 font-medium mb-4">{currentUser?.email}</p>
+          <h2 className="text-4xl font-black text-slate-900 dark:text-white mb-1">{currentUser?.displayName || 'Wellness Seeker'}</h2>
+          <p className="text-slate-500 dark:text-slate-400 font-medium mb-1">{currentUser?.email}</p>
+          {(currentUser?.age || currentUser?.gender) && (
+            <p className="text-sm text-slate-400 dark:text-slate-500 mb-4">
+              {currentUser?.gender}{currentUser?.age && currentUser?.gender ? ', ' : ''}{currentUser?.age ? `${currentUser.age} years old` : ''}
+            </p>
+          )}
+          {!currentUser?.age && !currentUser?.gender && <div className="mb-4" />}
           <div className="flex flex-wrap justify-center md:justify-start gap-4">
             <button 
               onClick={() => setView('tests')}

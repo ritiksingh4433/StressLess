@@ -25,7 +25,8 @@ const Signup = ({ onNavigate, onSignupSuccess }) => {
       await signup(email, password, displayName);
       onSignupSuccess();
     } catch (err) {
-      setError('Failed to create an account: ' + err.message);
+      const msg = err.response?.data?.error || err.message;
+      setError(msg);
     }
     setLoading(false);
   };

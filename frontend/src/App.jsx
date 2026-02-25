@@ -12,6 +12,7 @@ import Login from './components/Login';
 import Signup from './components/Signup';
 import Dashboard from './components/Dashboard';
 import ChatBot from './components/ChatBot';
+import UserIntake from './components/UserIntake';
 import { AuthProvider, useAuth } from './context/AuthContext';
 
 const AppContent = () => {
@@ -27,6 +28,9 @@ const AppContent = () => {
   const [activeQuestions, setActiveQuestions] = useState([]);
   const [usedQuestions, setUsedQuestions] = useState({ medical: [], financial: [], relationship: [] });
   const [redirectAfterLogin, setRedirectAfterLogin] = useState(null);
+  const [userIntakeText, setUserIntakeText] = useState('');
+  const [primaryCategory, setPrimaryCategory] = useState(null);
+  const [detectedKeywords, setDetectedKeywords] = useState([]);
 
   const allQuestions = {
     medical: [
@@ -171,7 +175,26 @@ const AppContent = () => {
       setCurrentPage('login');
       return;
     }
+    // Go to intake page first — user describes their problems
+    setCurrentPage('intake');
+  };
+
+  const handleQuestionsGenerated = (questions, primary, keywords, intakeText) => {
+    setActiveQuestions(questions);
+    setPrimaryCategory(primary);
+    setDetectedKeywords(keywords);
+    setUserIntakeText(intakeText);
+    setCurrentQuestion(0);
+    setAnswers([]);
+    setStressScore(null);
+    setCurrentPage('test');
+  };
+
+  const startTestWithRandomQuestions = () => {
     setActiveQuestions(getRandomQuestions());
+    setPrimaryCategory(null);
+    setDetectedKeywords([]);
+    setUserIntakeText('');
     setCurrentQuestion(0);
     setAnswers([]);
     setStressScore(null);
@@ -198,7 +221,7 @@ const AppContent = () => {
 
   const handleLoginSuccess = () => {
     if (redirectAfterLogin === 'test') {
-      startTest();
+      setCurrentPage('intake');
     } else if (redirectAfterLogin) {
       setCurrentPage(redirectAfterLogin);
     } else {
@@ -284,8 +307,8 @@ const AppContent = () => {
   };
 
   const restartTest = () => {
-    startTest();
     setSelectedTherapy(null);
+    setCurrentPage('intake');
   };
 
   // --------------------- PAGE RENDER LOGIC ----------------------
@@ -304,6 +327,14 @@ const AppContent = () => {
     switch (currentPage) {
       case 'home':
         return <HomePage onStartTest={startTest} />;
+
+      case 'intake':
+        return (
+          <UserIntake
+            onQuestionsGenerated={handleQuestionsGenerated}
+            onBackHome={() => setCurrentPage('home')}
+          />
+        );
 
       case 'test':
         return (

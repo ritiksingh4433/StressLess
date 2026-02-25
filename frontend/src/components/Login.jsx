@@ -18,7 +18,8 @@ const Login = ({ onNavigate, onLoginSuccess }) => {
       await login(email, password);
       onLoginSuccess();
     } catch (err) {
-      setError('Failed to log in: ' + err.message);
+      const msg = err.response?.data?.error || err.message;
+      setError(msg);
     }
     setLoading(false);
   };
