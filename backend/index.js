@@ -1,13 +1,14 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const path = require('path');
 const { PrismaClient } = require('@prisma/client');
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 const OpenAI = require('openai');
 const bcrypt = require('bcryptjs');
 
-dotenv.config();
+dotenv.config({ path: path.join(__dirname, '.env') });
 
 const app = express();
 const prisma = new PrismaClient();
@@ -17,9 +18,41 @@ const openai = new OpenAI({
   apiKey: process.env.OPENROUTER_API_KEY,
 });
 
+const adminEmails = new Set(
+  (process.env.ADMIN_EMAILS || '')
+    .split(',')
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean)
+);
+
+const isAdminEmail = (email) => {
+  if (!email) return false;
+  return adminEmails.has(String(email).trim().toLowerCase());
+};
+
+const isUuid = (value) =>
+  typeof value === 'string' &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+
+const promoteConfiguredAdminIfNeeded = async (user) => {
+  if (!user || !isAdminEmail(user.email) || user.role === 'admin') {
+    return user;
+  }
+
+  return prisma.user.update({
+    where: { id: user.id },
+    data: { role: 'admin' },
+  });
+};
+
 // Enhanced CORS configuration to handle different network conditions
 const corsOptions = {
   origin: function (origin, callback) {
+    // In local development, allow all origins to avoid preflight/network issues.
+    if (process.env.NODE_ENV !== 'production') {
+      return callback(null, true);
+    }
+
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
     
@@ -46,7 +79,7 @@ const corsOptions = {
   },
   credentials: true,
   optionsSuccessStatus: 200,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   exposedHeaders: ['Content-Length', 'X-Request-Id'],
   maxAge: 86400, // 24 hours
@@ -78,6 +111,29 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
+const requireAdmin = async (req, res, next) => {
+  try {
+    const dbUser = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { id: true, email: true, role: true },
+    });
+
+    if (!dbUser) {
+      return res.status(401).json({ error: 'User not found' });
+    }
+
+    if (dbUser.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    req.admin = dbUser;
+    next();
+  } catch (error) {
+    console.error('Admin auth error:', error);
+    res.status(500).json({ error: 'Failed to verify admin access' });
+  }
+};
+
 // --- AUTH ROUTES ---
 
 // Google Auth
@@ -97,12 +153,23 @@ app.post('/api/auth/google', async (req, res) => {
 
     let user = await prisma.user.upsert({
       where: { email },
-      update: { displayName: name, photoURL: picture },
-      create: { email, displayName: name, photoURL: picture },
+      update: {
+        displayName: name,
+        photoURL: picture,
+        ...(isAdminEmail(email) ? { role: 'admin' } : {}),
+      },
+      create: {
+        email,
+        displayName: name,
+        photoURL: picture,
+        role: isAdminEmail(email) ? 'admin' : 'user',
+      },
     });
 
+    user = await promoteConfiguredAdminIfNeeded(user);
+
     const token = jwt.sign(
-      { id: user.id, email: user.email },
+      { id: user.id, email: user.email, role: user.role },
       process.env.JWT_SECRET || 'your_secret_key',
       { expiresIn: '7d' }
     );
@@ -122,7 +189,7 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    const user = await prisma.user.findUnique({ where: { email } });
+    let user = await prisma.user.findUnique({ where: { email } });
 
     if (!user) {
       return res.status(401).json({ error: 'No account found with this email. Please sign up first.' });
@@ -138,8 +205,10 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'Incorrect password. Please try again.' });
     }
 
+    user = await promoteConfiguredAdminIfNeeded(user);
+
     const token = jwt.sign(
-      { id: user.id, email: user.email },
+      { id: user.id, email: user.email, role: user.role },
       process.env.JWT_SECRET || 'your_secret_key',
       { expiresIn: '7d' }
     );
@@ -169,11 +238,16 @@ app.post('/api/auth/signup', async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const user = await prisma.user.create({
-      data: { email, password: hashedPassword, displayName }
+      data: {
+        email,
+        password: hashedPassword,
+        displayName,
+        role: isAdminEmail(email) ? 'admin' : 'user',
+      }
     });
 
     const token = jwt.sign(
-      { id: user.id, email: user.email },
+      { id: user.id, email: user.email, role: user.role },
       process.env.JWT_SECRET || 'your_secret_key',
       { expiresIn: '7d' }
     );
@@ -281,6 +355,270 @@ app.get('/api/history', authenticateToken, async (req, res) => {
   }
 });
 
+// --- ADMIN ROUTES ---
+
+app.get('/api/admin/overview', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const [usersCount, resultsCount, appointmentsCount] = await prisma.$transaction([
+      prisma.user.count(),
+      prisma.testResult.count(),
+      prisma.appointment.count(),
+    ]);
+
+    res.json({ usersCount, resultsCount, appointmentsCount });
+  } catch (error) {
+    console.error('Admin overview error:', error);
+    res.status(500).json({ error: 'Failed to load admin overview' });
+  }
+});
+
+app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const search = String(req.query.search || '').trim();
+
+    const users = await prisma.user.findMany({
+      where: search
+        ? {
+            OR: [
+              { email: { contains: search, mode: 'insensitive' } },
+              { displayName: { contains: search, mode: 'insensitive' } },
+            ],
+          }
+        : undefined,
+      select: {
+        id: true,
+        email: true,
+        displayName: true,
+        photoURL: true,
+        age: true,
+        gender: true,
+        role: true,
+        createdAt: true,
+        _count: {
+          select: {
+            results: true,
+            appointments: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json({ users });
+  } catch (error) {
+    console.error('Admin users list error:', error);
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+app.get('/api/admin/users/:userId/history', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        displayName: true,
+        role: true,
+        age: true,
+        gender: true,
+        createdAt: true,
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const [results, appointments] = await prisma.$transaction([
+      prisma.testResult.findMany({
+        where: { userId },
+        orderBy: { timestamp: 'desc' },
+      }),
+      prisma.appointment.findMany({
+        where: { userId },
+        orderBy: { timestamp: 'desc' },
+      }),
+    ]);
+
+    res.json({ user, results, appointments });
+  } catch (error) {
+    console.error('Admin user history error:', error);
+    res.status(500).json({ error: 'Failed to fetch user history' });
+  }
+});
+
+app.patch('/api/admin/users/:userId', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { displayName, age, gender, role } = req.body;
+
+    if (!isUuid(userId)) {
+      return res.status(400).json({ error: 'Invalid user ID format' });
+    }
+
+    if (role && !['user', 'admin'].includes(role)) {
+      return res.status(400).json({ error: 'Invalid role. Allowed values: user, admin' });
+    }
+
+    const data = {};
+    if (displayName !== undefined) data.displayName = displayName || null;
+    if (age !== undefined) data.age = age === null || age === '' ? null : parseInt(age);
+    if (gender !== undefined) data.gender = gender || null;
+    if (role !== undefined) data.role = role;
+
+    if (Object.keys(data).length === 0) {
+      return res.status(400).json({ error: 'No fields provided to update' });
+    }
+
+    const existingUser = await prisma.user.findUnique({ where: { id: userId } });
+    if (!existingUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data,
+      select: {
+        id: true,
+        email: true,
+        displayName: true,
+        age: true,
+        gender: true,
+        role: true,
+      },
+    });
+
+    res.json({ user: updatedUser });
+  } catch (error) {
+    console.error('Admin update user error:', error);
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.status(500).json({ error: 'Failed to update user' });
+  }
+});
+
+app.delete('/api/admin/users/:userId', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (!isUuid(userId)) {
+      return res.status(400).json({ error: 'Invalid user ID format' });
+    }
+
+    if (userId === req.admin.id) {
+      return res.status(400).json({ error: 'You cannot delete your own admin account' });
+    }
+
+    const existingUser = await prisma.user.findUnique({ where: { id: userId } });
+    if (!existingUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    await prisma.$transaction([
+      prisma.testResult.deleteMany({ where: { userId } }),
+      prisma.appointment.deleteMany({ where: { userId } }),
+      prisma.user.delete({ where: { id: userId } }),
+    ]);
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Admin delete user error:', error);
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.status(500).json({ error: 'Failed to delete user' });
+  }
+});
+
+app.get('/api/admin/results', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const results = await prisma.testResult.findMany({
+      include: {
+        user: {
+          select: { id: true, email: true, displayName: true },
+        },
+      },
+      orderBy: { timestamp: 'desc' },
+    });
+
+    res.json({ results });
+  } catch (error) {
+    console.error('Admin results list error:', error);
+    res.status(500).json({ error: 'Failed to fetch results' });
+  }
+});
+
+app.delete('/api/admin/results/:resultId', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { resultId } = req.params;
+    await prisma.testResult.delete({ where: { id: resultId } });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Admin delete result error:', error);
+    res.status(500).json({ error: 'Failed to delete result' });
+  }
+});
+
+app.get('/api/admin/appointments', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const appointments = await prisma.appointment.findMany({
+      include: {
+        user: {
+          select: { id: true, email: true, displayName: true },
+        },
+      },
+      orderBy: { timestamp: 'desc' },
+    });
+
+    res.json({ appointments });
+  } catch (error) {
+    console.error('Admin appointments list error:', error);
+    res.status(500).json({ error: 'Failed to fetch appointments' });
+  }
+});
+
+app.patch('/api/admin/appointments/:appointmentId', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { appointmentId } = req.params;
+    const { doctorName, slot, status } = req.body;
+    const data = {};
+
+    if (doctorName !== undefined) data.doctorName = doctorName;
+    if (slot !== undefined) data.slot = slot;
+    if (status !== undefined) data.status = status;
+
+    const appointment = await prisma.appointment.update({
+      where: { id: appointmentId },
+      data,
+      include: {
+        user: {
+          select: { id: true, email: true, displayName: true },
+        },
+      },
+    });
+
+    res.json({ appointment });
+  } catch (error) {
+    console.error('Admin update appointment error:', error);
+    res.status(500).json({ error: 'Failed to update appointment' });
+  }
+});
+
+app.delete('/api/admin/appointments/:appointmentId', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { appointmentId } = req.params;
+    await prisma.appointment.delete({ where: { id: appointmentId } });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Admin delete appointment error:', error);
+    res.status(500).json({ error: 'Failed to delete appointment' });
+  }
+});
+
 // AI Chatbot Route
 app.post('/api/chat', authenticateToken, async (req, res) => {
   try {
@@ -320,7 +658,10 @@ app.post('/api/chat', authenticateToken, async (req, res) => {
     res.json({ text: responseText });
   } catch (error) {
     console.error('AI Chat Error:', error);
-    res.status(500).json({ error: 'Failed to get AI response: ' + (error.message || 'Unknown error') });
+    if (error.status === 401 || error.status === 403 || (error.message && error.message.includes('401'))) {
+      return res.status(503).json({ error: 'AI service authentication failed. Please check your OpenRouter API key.' });
+    }
+    res.status(500).json({ error: 'Failed to get AI response. Please try again.' });
   }
 });
 
@@ -503,7 +844,10 @@ Generate now:`;
     res.json({ analysis, cached: false });
   } catch (error) {
     console.error('AI Analysis Error:', error);
-    res.status(500).json({ error: 'Failed to generate AI analysis: ' + (error.message || 'Unknown error') });
+    if (error.status === 401 || error.status === 403 || (error.message && error.message.includes('401'))) {
+      return res.status(503).json({ error: 'AI service authentication failed. Please check your OpenRouter API key.' });
+    }
+    res.status(500).json({ error: 'Failed to generate AI analysis. Please try again.' });
   }
 });
 
@@ -512,12 +856,94 @@ app.post('/api/generate-questions', authenticateToken, async (req, res) => {
   try {
     const { userResponse } = req.body;
 
+    const validCategories = ['medical', 'financial', 'relationship'];
+    const genericFallbacks = {
+      medical: [
+        'Do you feel physically exhausted most days?',
+        'Do you experience trouble sleeping due to stress?',
+        'Do you feel mentally drained during the day?',
+        'Do you experience headaches or body tension?',
+        'Do you feel burnout from daily responsibilities?'
+      ],
+      financial: [
+        'Do you worry about money regularly?',
+        'Do you feel anxious about your financial future?',
+        'Do unexpected expenses cause you significant stress?',
+        'Do financial concerns affect your daily mood?',
+        'Do you feel financially insecure?'
+      ],
+      relationship: [
+        'Do you feel emotionally unsupported by those close to you?',
+        'Do conflicts with others affect your peace of mind?',
+        'Do you feel lonely even around people?',
+        "Do others' expectations cause you stress?",
+        'Do you find it hard to express your feelings?'
+      ]
+    };
+
+    const buildFallbackResponse = (inputText) => {
+      const text = String(inputText || '').toLowerCase();
+      const categorySignals = {
+        medical: ['sleep', 'tired', 'fatigue', 'health', 'pain', 'headache', 'burnout', 'exhausted', 'body'],
+        financial: ['money', 'bill', 'debt', 'expense', 'salary', 'income', 'loan', 'rent', 'financial'],
+        relationship: ['family', 'friend', 'relationship', 'partner', 'conflict', 'lonely', 'trust', 'argument']
+      };
+
+      const scores = {
+        medical: 0,
+        financial: 0,
+        relationship: 0,
+      };
+
+      Object.entries(categorySignals).forEach(([cat, words]) => {
+        words.forEach((word) => {
+          if (text.includes(word)) scores[cat] += 1;
+        });
+      });
+
+      const ranked = Object.entries(scores)
+        .sort((a, b) => b[1] - a[1])
+        .map(([cat]) => cat);
+
+      const primaryCategory = ranked[0] || 'medical';
+      const secondary = ranked[1] || (primaryCategory === 'financial' ? 'medical' : 'financial');
+      const tertiary = ranked[2] || 'relationship';
+      const distribution = {
+        [primaryCategory]: 8,
+        [secondary]: 4,
+        [tertiary]: 3,
+      };
+
+      const keywords = text
+        .split(/[^a-z0-9]+/)
+        .filter((w) => w.length > 3)
+        .slice(0, 5);
+
+      const questions = [];
+      [primaryCategory, secondary, tertiary].forEach((cat) => {
+        const source = genericFallbacks[cat] || [];
+        const count = distribution[cat] || 0;
+
+        for (let i = 0; i < count; i += 1) {
+          const base = source[i % source.length] || `Do you experience stress related to ${cat}?`;
+          questions.push({ text: base, category: cat });
+        }
+      });
+
+      return {
+        primaryCategory,
+        keywords,
+        questions: questions.slice(0, 15),
+      };
+    };
+
     if (!userResponse || userResponse.trim().length < 10) {
       return res.status(400).json({ error: 'Please describe your situation in at least a few sentences.' });
     }
 
     if (!process.env.OPENROUTER_API_KEY) {
-      return res.status(500).json({ error: 'OpenRouter API Key not configured' });
+      const fallback = buildFallbackResponse(userResponse);
+      return res.json({ ...fallback, generatedBy: 'fallback' });
     }
 
     const completion = await openai.chat.completions.create({
@@ -579,41 +1005,17 @@ IMPORTANT: Return ONLY valid JSON. No extra text, no explanation, no markdown.`
 
     // Validate the response structure
     if (!parsed.questions || !Array.isArray(parsed.questions) || parsed.questions.length < 10) {
-      return res.status(500).json({ error: 'AI generated insufficient questions. Please try again.' });
+      const fallback = buildFallbackResponse(userResponse);
+      return res.json({ ...fallback, generatedBy: 'fallback' });
     }
 
     // Ensure exactly 15 questions and proper categories
-    const validCategories = ['medical', 'financial', 'relationship'];
     const validQuestions = parsed.questions
       .filter(q => q.text && q.category && validCategories.includes(q.category))
       .slice(0, 15);
 
     if (validQuestions.length < 15) {
       // Pad with generic questions if AI didn't produce enough
-      const genericFallbacks = {
-        medical: [
-          "Do you feel physically exhausted most days?",
-          "Do you experience trouble sleeping due to stress?",
-          "Do you feel mentally drained during the day?",
-          "Do you experience headaches or body tension?",
-          "Do you feel burnout from daily responsibilities?"
-        ],
-        financial: [
-          "Do you worry about money regularly?",
-          "Do you feel anxious about your financial future?",
-          "Do unexpected expenses cause you significant stress?",
-          "Do financial concerns affect your daily mood?",
-          "Do you feel financially insecure?"
-        ],
-        relationship: [
-          "Do you feel emotionally unsupported by those close to you?",
-          "Do conflicts with others affect your peace of mind?",
-          "Do you feel lonely even around people?",
-          "Do others' expectations cause you stress?",
-          "Do you find it hard to express your feelings?"
-        ]
-      };
-
       while (validQuestions.length < 15) {
         for (const cat of validCategories) {
           if (validQuestions.length >= 15) break;
@@ -636,7 +1038,34 @@ IMPORTANT: Return ONLY valid JSON. No extra text, no explanation, no markdown.`
 
   } catch (error) {
     console.error('Question Generation Error:', error);
-    res.status(500).json({ error: 'Failed to generate questions: ' + (error.message || 'Unknown error') });
+    const text = req?.body?.userResponse || '';
+    const fallback = {
+      primaryCategory: 'medical',
+      keywords: text
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((w) => w.length > 3)
+        .slice(0, 5),
+      questions: [
+        { text: 'Do you feel physically exhausted most days?', category: 'medical' },
+        { text: 'Do you experience trouble sleeping due to stress?', category: 'medical' },
+        { text: 'Do you feel mentally drained during the day?', category: 'medical' },
+        { text: 'Do you experience headaches or body tension?', category: 'medical' },
+        { text: 'Do you feel burnout from daily responsibilities?', category: 'medical' },
+        { text: 'Do you worry about money regularly?', category: 'financial' },
+        { text: 'Do you feel anxious about your financial future?', category: 'financial' },
+        { text: 'Do unexpected expenses cause you significant stress?', category: 'financial' },
+        { text: 'Do financial concerns affect your daily mood?', category: 'financial' },
+        { text: 'Do you feel emotionally unsupported by those close to you?', category: 'relationship' },
+        { text: 'Do conflicts with others affect your peace of mind?', category: 'relationship' },
+        { text: 'Do you feel lonely even around people?', category: 'relationship' },
+        { text: "Do others' expectations cause you stress?", category: 'relationship' },
+        { text: 'Do you find it hard to express your feelings?', category: 'relationship' },
+        { text: 'Do relationship conflicts affect your daily peace?', category: 'relationship' },
+      ],
+    };
+
+    res.json({ ...fallback, generatedBy: 'fallback' });
   }
 });
 

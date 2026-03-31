@@ -24,7 +24,87 @@ const UserIntake = ({ onQuestionsGenerated, onBackHome }) => {
     "My family conflicts are affecting my mental peace...",
   ];
 
+  const buildLocalFallback = (inputText) => {
+    const text = String(inputText || '').toLowerCase();
+    const categorySignals = {
+      medical: ['sleep', 'tired', 'fatigue', 'health', 'pain', 'headache', 'burnout', 'exhausted', 'body'],
+      financial: ['money', 'bill', 'debt', 'expense', 'salary', 'income', 'loan', 'rent', 'financial'],
+      relationship: ['family', 'friend', 'relationship', 'partner', 'conflict', 'lonely', 'trust', 'argument']
+    };
+
+    const genericFallbacks = {
+      medical: [
+        'Do you feel physically exhausted most days?',
+        'Do you experience trouble sleeping due to stress?',
+        'Do you feel mentally drained during the day?',
+        'Do you experience headaches or body tension?',
+        'Do you feel burnout from daily responsibilities?'
+      ],
+      financial: [
+        'Do you worry about money regularly?',
+        'Do you feel anxious about your financial future?',
+        'Do unexpected expenses cause you significant stress?',
+        'Do financial concerns affect your daily mood?',
+        'Do you feel financially insecure?'
+      ],
+      relationship: [
+        'Do you feel emotionally unsupported by those close to you?',
+        'Do conflicts with others affect your peace of mind?',
+        'Do you feel lonely even around people?',
+        "Do others' expectations cause you stress?",
+        'Do you find it hard to express your feelings?'
+      ]
+    };
+
+    const scores = { medical: 0, financial: 0, relationship: 0 };
+    Object.entries(categorySignals).forEach(([cat, words]) => {
+      words.forEach((word) => {
+        if (text.includes(word)) scores[cat] += 1;
+      });
+    });
+
+    const ranked = Object.entries(scores)
+      .sort((a, b) => b[1] - a[1])
+      .map(([cat]) => cat);
+
+    const primaryCategory = ranked[0] || 'medical';
+    const secondCategory = ranked[1] || (primaryCategory === 'financial' ? 'medical' : 'financial');
+    const thirdCategory = ranked[2] || 'relationship';
+
+    const distribution = {
+      [primaryCategory]: 8,
+      [secondCategory]: 4,
+      [thirdCategory]: 3,
+    };
+
+    const questions = [];
+    [primaryCategory, secondCategory, thirdCategory].forEach((cat) => {
+      const source = genericFallbacks[cat] || [];
+      const count = distribution[cat] || 0;
+      for (let i = 0; i < count; i += 1) {
+        const q = source[i % source.length] || `Do you experience stress related to ${cat}?`;
+        questions.push({ text: q, category: cat });
+      }
+    });
+
+    const keywords = text
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w.length > 3)
+      .slice(0, 5);
+
+    return {
+      questions: questions.slice(0, 15),
+      primaryCategory,
+      keywords,
+    };
+  };
+
   const handleSubmit = async () => {
+    if (!token) {
+      setError('Your session has expired. Please sign in again and retry.');
+      return;
+    }
+
     if (!hasProfile) {
       if (!age || parseInt(age) < 5 || parseInt(age) > 120) {
         setError('Please enter a valid age.');
@@ -79,6 +159,19 @@ const UserIntake = ({ onQuestionsGenerated, onBackHome }) => {
         } catch {
           errMsg = `Server returned ${response.status}. Make sure the backend is running.`;
         }
+
+        if (response.status === 401 || response.status === 403) {
+          throw new Error('Your session has expired. Please sign in again.');
+        }
+
+        // For temporary backend/AI failures, continue with local fallback so users can proceed.
+        if (response.status >= 500) {
+          const fallback = buildLocalFallback(userText);
+          onQuestionsGenerated(fallback.questions, fallback.primaryCategory, fallback.keywords, userText);
+          setError('AI service is temporarily unavailable. Generated a reliable assessment instead.');
+          return;
+        }
+
         throw new Error(errMsg);
       }
 
@@ -86,6 +179,15 @@ const UserIntake = ({ onQuestionsGenerated, onBackHome }) => {
       onQuestionsGenerated(data.questions, data.primaryCategory, data.keywords, userText);
     } catch (err) {
       console.error('Error generating questions:', err);
+
+      // Network/server unreachable fallback path.
+      if (String(err.message || '').toLowerCase().includes('failed to fetch')) {
+        const fallback = buildLocalFallback(userText);
+        onQuestionsGenerated(fallback.questions, fallback.primaryCategory, fallback.keywords, userText);
+        setError('Backend is unreachable right now. Generated a reliable assessment instead.');
+        return;
+      }
+
       setError(err.message || 'Something went wrong. Please try again.');
     } finally {
       setLoading(false);

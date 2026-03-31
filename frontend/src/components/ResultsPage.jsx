@@ -195,6 +195,30 @@ const ResultsPage = ({ stressScore, categoricalScores, resultId, savedAnalysis, 
     };
   };
 
+  const getCategoryLevel = (score) => {
+    if (score <= 7) {
+      return {
+        level: 'Low',
+        color: 'text-green-500',
+        barColor: 'bg-green-500',
+      };
+    }
+
+    if (score <= 14) {
+      return {
+        level: 'Medium',
+        color: 'text-yellow-500',
+        barColor: 'bg-yellow-500',
+      };
+    }
+
+    return {
+      level: 'High',
+      color: 'text-red-500',
+      barColor: 'bg-red-500',
+    };
+  };
+
   const { level, color, bg, icon, message, recommendations } = getStressLevel(stressScore, 60);
 
   const breakdown = [
@@ -291,7 +315,7 @@ const ResultsPage = ({ stressScore, categoricalScores, resultId, savedAnalysis, 
               {/* Category Breakdown Grid */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-10">
                 {breakdown.map((cat) => {
-                  const catData = getStressLevel(cat.score, 20); // 5 questions * 4 = 20 max per category
+                  const catData = getCategoryLevel(cat.score);
                   return (
                     <motion.div 
                       key={cat.id}
@@ -308,7 +332,7 @@ const ResultsPage = ({ stressScore, categoricalScores, resultId, savedAnalysis, 
                       
                       <div className="flex items-end justify-between mb-2">
                         <span className={`text-xs font-black uppercase tracking-wider ${catData.color}`}>
-                          {catData.level.split(' ')[0]}
+                          {catData.level}
                         </span>
                         <span className="text-lg font-bold text-slate-900 dark:text-white">{cat.score}<span className="text-xs text-slate-400 dark:text-slate-500">/20</span></span>
                       </div>
@@ -317,7 +341,7 @@ const ResultsPage = ({ stressScore, categoricalScores, resultId, savedAnalysis, 
                         <motion.div 
                           initial={{ width: 0 }}
                           animate={{ width: `${(cat.score / 20) * 100}%` }}
-                          className={`h-full ${catData.color.replace('text', 'bg')}`}
+                          className={`h-full ${catData.barColor}`}
                         />
                       </div>
                     </motion.div>

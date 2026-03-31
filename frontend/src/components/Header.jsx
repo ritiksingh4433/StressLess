@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Activity, User, ArrowLeft, Home, LogOut, Info, ChevronDown, LayoutDashboard, Sun, Moon } from 'lucide-react';
+import { Activity, User, ArrowLeft, Home, LogOut, Info, ChevronDown, LayoutDashboard, Sun, Moon, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 
@@ -8,6 +8,7 @@ const Header = ({ currentPage, onNavigate, showBackButton, onBack }) => {
   const { currentUser, logout } = useAuth();
   const { isDarkMode, toggleTheme } = useTheme();
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const isAdmin = currentUser?.role === 'admin';
 
   const handleLogout = async () => {
     try {
@@ -55,6 +56,7 @@ const Header = ({ currentPage, onNavigate, showBackButton, onBack }) => {
               <NavButton label="Home" page="home" icon={Home} />
               <NavButton label="Remedies" page="remedies" icon={Activity} />
               <NavButton label="About" page="about" icon={Info} />
+              {isAdmin && <NavButton label="Admin" page="admin" icon={ShieldCheck} />}
             </nav>
           )}
 
@@ -128,6 +130,21 @@ const Header = ({ currentPage, onNavigate, showBackButton, onBack }) => {
                         </div>
                         My Dashboard
                       </button>
+
+                      {isAdmin && (
+                        <button
+                          onClick={() => {
+                            onNavigate('admin');
+                            setShowUserMenu(false);
+                          }}
+                          className="w-full flex items-center gap-3 px-5 py-4 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-white/5 transition-all font-black rounded-2xl group"
+                        >
+                          <div className="p-2 bg-blue-500/10 rounded-lg group-hover:bg-blue-500/20 transition-colors">
+                            <ShieldCheck size={18} className="text-blue-500" />
+                          </div>
+                          Admin Panel
+                        </button>
+                      )}
 
                       <button
                         onClick={handleLogout}

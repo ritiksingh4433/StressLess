@@ -13,10 +13,12 @@ import Signup from './components/Signup';
 import Dashboard from './components/Dashboard';
 import ChatBot from './components/ChatBot';
 import UserIntake from './components/UserIntake';
+import AdminPanel from './components/AdminPanel';
 import { AuthProvider, useAuth } from './context/AuthContext';
 
 const AppContent = () => {
   const { currentUser, token } = useAuth();
+  const isAdmin = currentUser?.role === 'admin';
   const [currentPage, setCurrentPage] = useState('home');
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [answers, setAnswers] = useState([]);
@@ -202,6 +204,11 @@ const AppContent = () => {
   };
 
   const handleNavigate = (page) => {
+    if (page === 'admin' && !isAdmin) {
+      setCurrentPage('home');
+      return;
+    }
+
     if ((page === 'remedies' || page === 'test') && !currentUser) {
       setRedirectAfterLogin(page);
       setCurrentPage('login');
@@ -250,17 +257,31 @@ const AppContent = () => {
       financial: 0,
       relationship: 0
     };
+    const categoryQuestionCounts = {
+      medical: 0,
+      financial: 0,
+      relationship: 0
+    };
 
     allAnswers.forEach((answer, index) => {
       total += answer;
       const category = activeQuestions[index].category;
-      categories[category] += answer;
+      if (categories[category] !== undefined) {
+        categories[category] += answer;
+        categoryQuestionCounts[category] += 1;
+      }
     });
 
+    const normalizeTo20 = (rawScore, questionCount) => {
+      if (!questionCount) return 0;
+      const maxPossible = questionCount * 4;
+      return Math.round((rawScore / maxPossible) * 20);
+    };
+
     const processedCategories = {
-      medical: categories.medical,
-      financial: categories.financial,
-      relationship: categories.relationship
+      medical: normalizeTo20(categories.medical, categoryQuestionCounts.medical),
+      financial: normalizeTo20(categories.financial, categoryQuestionCounts.financial),
+      relationship: normalizeTo20(categories.relationship, categoryQuestionCounts.relationship)
     };
 
     setStressScore(total);
@@ -374,6 +395,9 @@ const AppContent = () => {
 
       case 'dashboard':
         return <Dashboard onViewResult={showPreviousResult} />;
+
+      case 'admin':
+        return <AdminPanel />;
 
       case 'signup':
         return <Signup onNavigate={handleNavigate} onSignupSuccess={handleLoginSuccess} />;
