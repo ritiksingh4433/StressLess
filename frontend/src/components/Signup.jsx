@@ -11,6 +11,7 @@ const Signup = ({ onNavigate, onSignupSuccess }) => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { signup, loginWithGoogle } = useAuth();
+  const hasGoogleClientId = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -38,7 +39,8 @@ const Signup = ({ onNavigate, onSignupSuccess }) => {
       await loginWithGoogle(response);
       onSignupSuccess();
     } catch (err) {
-      setError('Failed to sign up with Google: ' + err.message);
+      const msg = err.response?.data?.error || err.message;
+      setError('Failed to sign up with Google: ' + msg);
     }
     setLoading(false);
   };
@@ -139,16 +141,22 @@ const Signup = ({ onNavigate, onSignupSuccess }) => {
         <div className="flex-1 h-px bg-slate-300 dark:bg-slate-700"></div>
       </div>
 
-      <div className="mt-6 flex justify-center">
-        <GoogleLogin
-          onSuccess={handleGoogleSuccess}
-          onError={() => setError('Google Sign Up Failed')}
-          theme="filled_blue"
-          shape="pill"
-          width="100%"
-          text="signup_with"
-        />
-      </div>
+      {hasGoogleClientId ? (
+        <div className="mt-6 flex justify-center">
+          <GoogleLogin
+            onSuccess={handleGoogleSuccess}
+            onError={() => setError('Google Sign Up Failed')}
+            theme="filled_blue"
+            shape="pill"
+            width="100%"
+            text="signup_with"
+          />
+        </div>
+      ) : (
+        <p className="mt-6 text-center text-xs text-slate-500 dark:text-slate-400">
+          Google Sign-In is currently unavailable. Please use email/password signup.
+        </p>
+      )}
 
       <p className="mt-8 text-center text-slate-500 dark:text-slate-400 text-sm">
         Already have an account?{' '}

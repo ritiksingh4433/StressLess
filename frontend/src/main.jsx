@@ -22,13 +22,20 @@ import './index.css'
 import App from './App.jsx'
 
 const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+const appTree = (
+  <ThemeProvider>
+    <App />
+  </ThemeProvider>
+);
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <GoogleOAuthProvider clientId={clientId}>
-      <ThemeProvider>
-        <App />
-      </ThemeProvider>
-    </GoogleOAuthProvider>
+    {clientId ? (
+      <GoogleOAuthProvider clientId={clientId}>
+        {appTree}
+      </GoogleOAuthProvider>
+    ) : (
+      appTree
+    )}
   </StrictMode>,
 )

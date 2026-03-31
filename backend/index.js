@@ -25,6 +25,13 @@ const adminEmails = new Set(
     .filter(Boolean)
 );
 
+const configuredFrontendOrigins = [
+  process.env.FRONTEND_URL,
+  ...(process.env.FRONTEND_URLS || '').split(',')
+]
+  .map((url) => (url || '').trim())
+  .filter(Boolean);
+
 const isAdminEmail = (email) => {
   if (!email) return false;
   return adminEmails.has(String(email).trim().toLowerCase());
@@ -60,6 +67,9 @@ const corsOptions = {
     const allowedOrigins = [
       // Production
       'https://stress-less-omega.vercel.app',
+      ...configuredFrontendOrigins,
+      /^https:\/\/.+\.onrender\.com$/,
+      /^https:\/\/.+\.vercel\.app$/,
       // Development
       /^http:\/\/localhost:\d+$/,
       /^http:\/\/127\.0\.0\.1:\d+$/,
@@ -74,7 +84,7 @@ const corsOptions = {
       callback(null, true);
     } else {
       console.log('CORS blocked origin:', origin);
-      callback(new Error('Not allowed by CORS'));
+      callback(null, false);
     }
   },
   credentials: true,
@@ -86,6 +96,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -139,6 +150,10 @@ const requireAdmin = async (req, res, next) => {
 // Google Auth
 app.post('/api/auth/google', async (req, res) => {
   try {
+    if (!process.env.GOOGLE_CLIENT_ID) {
+      return res.status(503).json({ error: 'Google Sign-In is not configured on server.' });
+    }
+
     const { idToken } = req.body;
     if (!idToken) {
       return res.status(400).json({ error: 'idToken is required' });
@@ -177,7 +192,14 @@ app.post('/api/auth/google', async (req, res) => {
     res.json({ token, user });
   } catch (error) {
     console.error('Google Auth Error:', error);
-    res.status(500).json({ error: error.message });
+    const message = error?.message || 'Google authentication failed';
+    if (message.includes('Wrong recipient') || message.includes('audience')) {
+      return res.status(401).json({ error: 'Google client ID mismatch. Please contact support.' });
+    }
+    if (message.includes('Token used too late') || message.includes('Invalid token')) {
+      return res.status(401).json({ error: 'Google token expired or invalid. Please try again.' });
+    }
+    res.status(500).json({ error: 'Failed to login with Google.' });
   }
 });
 
