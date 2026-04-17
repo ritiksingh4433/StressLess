@@ -12,7 +12,13 @@ dotenv.config({ path: path.join(__dirname, '.env') });
 
 const app = express();
 const prisma = new PrismaClient();
-const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+const configuredGoogleClientIds = [
+  process.env.GOOGLE_CLIENT_ID,
+  ...(process.env.GOOGLE_CLIENT_IDS || '').split(','),
+]
+  .map((value) => String(value || '').trim())
+  .filter(Boolean);
+const googleClient = new OAuth2Client(configuredGoogleClientIds[0]);
 const openai = new OpenAI({
   baseURL: "https://openrouter.ai/api/v1",
   apiKey: process.env.OPENROUTER_API_KEY,
@@ -224,7 +230,7 @@ const requireAdmin = async (req, res, next) => {
 // Google Auth
 app.post('/api/auth/google', async (req, res) => {
   try {
-    if (!process.env.GOOGLE_CLIENT_ID) {
+    if (configuredGoogleClientIds.length === 0) {
       return res.status(503).json({ error: 'Google Sign-In is not configured on server.' });
     }
 
@@ -235,10 +241,18 @@ app.post('/api/auth/google', async (req, res) => {
 
     const ticket = await googleClient.verifyIdToken({
       idToken,
-      audience: process.env.GOOGLE_CLIENT_ID,
+      audience: configuredGoogleClientIds,
     });
     const payload = ticket.getPayload();
     const { email, name, picture } = payload;
+
+    if (!email) {
+      return res.status(401).json({ error: 'Google did not return an email for this account.' });
+    }
+
+    if (payload.email_verified === false) {
+      return res.status(401).json({ error: 'Please verify your Google email before signing in.' });
+    }
 
     let user = await withPrismaRetry(() => prisma.user.upsert({
       where: { email },
@@ -267,12 +281,35 @@ app.post('/api/auth/google', async (req, res) => {
   } catch (error) {
     console.error('Google Auth Error:', error);
     const message = error?.message || 'Google authentication failed';
+
+    if (
+      message.includes('origin is not allowed for the given client ID') ||
+      message.includes('invalid_origin')
+    ) {
+      return res.status(401).json({
+        error: 'This domain is not authorized for Google Sign-In. Add your live frontend URL to Google OAuth Authorized JavaScript origins.',
+      });
+    }
+
     if (message.includes('Wrong recipient') || message.includes('audience')) {
       return res.status(401).json({ error: 'Google client ID mismatch. Please contact support.' });
     }
-    if (message.includes('Token used too late') || message.includes('Invalid token')) {
+
+    if (
+      message.includes('Token used too late') ||
+      message.includes('Invalid token') ||
+      message.includes('Token signature') ||
+      message.includes('No pem found') ||
+      message.includes('Malformed') ||
+      message.includes('Wrong number of segments in token')
+    ) {
       return res.status(401).json({ error: 'Google token expired or invalid. Please try again.' });
     }
+
+    if (message.includes('ENOTFOUND') || message.includes('ETIMEDOUT')) {
+      return res.status(503).json({ error: 'Google authentication service is temporarily unavailable. Please try again.' });
+    }
+
     res.status(500).json({ error: 'Failed to login with Google.' });
   }
 });

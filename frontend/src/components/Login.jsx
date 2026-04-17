@@ -38,6 +38,12 @@ const Login = ({ onNavigate, onLoginSuccess }) => {
     setLoading(false);
   };
 
+  const handleGoogleError = () => {
+    setError(
+      'Google Sign-In failed for this domain. Ensure this live site URL is added in Google Cloud OAuth Authorized JavaScript origins, then redeploy with the same VITE_GOOGLE_CLIENT_ID.'
+    );
+  };
+
   return (
     <div className="max-w-md mx-auto mt-12 p-10 glass-card rounded-[2.5rem] relative overflow-hidden">
       {/* Decorative glow */}
@@ -107,10 +113,10 @@ const Login = ({ onNavigate, onLoginSuccess }) => {
         <div className="mt-6 flex justify-center">
           <GoogleLogin
             onSuccess={handleGoogleSuccess}
-            onError={() => setError('Google Login Failed')}
+            onError={handleGoogleError}
             theme="filled_blue"
             shape="pill"
-            width="100%"
+            size="large"
           />
         </div>
       ) : (
