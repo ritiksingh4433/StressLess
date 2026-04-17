@@ -32,8 +32,10 @@ const Login = ({ onNavigate, onLoginSuccess }) => {
       await loginWithGoogle(response);
       onLoginSuccess();
     } catch (err) {
-      const msg = err.response?.data?.error || err.message;
-      setError('Failed to log in with Google: ' + msg);
+      const status = err.response?.status;
+      const msg = err.response?.data?.error || err.message || 'Google login failed.';
+      const details = status ? ` (HTTP ${status})` : '';
+      setError('Failed to log in with Google: ' + msg + details);
     }
     setLoading(false);
   };

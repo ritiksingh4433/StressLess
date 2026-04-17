@@ -281,6 +281,7 @@ app.post('/api/auth/google', async (req, res) => {
   } catch (error) {
     console.error('Google Auth Error:', error);
     const message = error?.message || 'Google authentication failed';
+    const code = String(error?.code || '');
 
     if (
       message.includes('origin is not allowed for the given client ID') ||
@@ -310,7 +311,27 @@ app.post('/api/auth/google', async (req, res) => {
       return res.status(503).json({ error: 'Google authentication service is temporarily unavailable. Please try again.' });
     }
 
-    res.status(500).json({ error: 'Failed to login with Google.' });
+    if (['P1001', 'P1002', 'P1017', 'P2024'].includes(code)) {
+      return res.status(503).json({ error: 'Database is temporarily unavailable. Please try again in a moment.' });
+    }
+
+    if (
+      message.includes("Can't reach database server") ||
+      message.includes('Timed out fetching a new connection from the connection pool') ||
+      message.includes('Connection terminated unexpectedly')
+    ) {
+      return res.status(503).json({ error: 'Database is temporarily unavailable. Please try again in a moment.' });
+    }
+
+    if (message.toLowerCase().includes('google') || message.toLowerCase().includes('token')) {
+      return res.status(401).json({
+        error: 'Google authentication failed. Verify GOOGLE_CLIENT_ID/GOOGLE_CLIENT_IDS and Authorized JavaScript origins for your live domain.',
+      });
+    }
+
+    return res.status(503).json({
+      error: 'Google sign-in is temporarily unavailable. Check server logs and OAuth configuration, then try again.',
+    });
   }
 });
 
