@@ -18,6 +18,75 @@ const openai = new OpenAI({
   apiKey: process.env.OPENROUTER_API_KEY,
 });
 
+const CALMBOT_MODEL = 'arcee-ai/trinity-large-preview:free';
+
+const buildCalmBotFallbackResponse = (message) => {
+  const text = String(message || '').toLowerCase();
+
+  if (text.includes('sleep') || text.includes('tired') || text.includes('anx')) {
+    return 'I am here with you. Try slowing your breathing for 1 minute, drink some water, and take one small next step instead of solving everything at once. If you want, tell me what is weighing on you most.';
+  }
+
+  if (text.includes('money') || text.includes('bill') || text.includes('debt') || text.includes('job')) {
+    return 'That sounds stressful. Focus on one practical action first: write down the immediate concern, separate what is urgent from what can wait, and do one small task like checking a bill or budget item. If you want, I can help you break it down.';
+  }
+
+  if (text.includes('family') || text.includes('friend') || text.includes('relationship') || text.includes('argu')) {
+    return 'That sounds emotionally heavy. Give yourself a short pause, avoid reacting while overwhelmed, and think about one calm sentence you can use to explain how you feel. If you want, I can help you plan that message.';
+  }
+
+  return 'I am having trouble reaching my AI service right now, but I am still here to help. Take one slow breath, describe what is bothering you in one sentence, and I will help you think it through.';
+};
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const isRecoverablePrismaError = (error) => {
+  const code = error?.code;
+  const message = String(error?.message || '');
+
+  return [
+    'P1001',
+    'P1002',
+    'P1017',
+    'P2024',
+  ].includes(code) ||
+    message.includes("Can't reach database server") ||
+    message.includes('Timed out fetching a new connection from the connection pool') ||
+    message.includes('Connection terminated unexpectedly');
+};
+
+const withPrismaRetry = async (operation, attempts = 3) => {
+  let lastError;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+
+      if (attempt === attempts || !isRecoverablePrismaError(error)) {
+        throw error;
+      }
+
+      try {
+        await prisma.$disconnect();
+      } catch (disconnectError) {
+        console.error('Prisma disconnect during retry failed:', disconnectError);
+      }
+
+      await sleep(200 * attempt);
+
+      try {
+        await prisma.$connect();
+      } catch (connectError) {
+        lastError = connectError;
+      }
+    }
+  }
+
+  throw lastError;
+};
+
 const adminEmails = new Set(
   (process.env.ADMIN_EMAILS || '')
     .split(',')
@@ -46,10 +115,10 @@ const promoteConfiguredAdminIfNeeded = async (user) => {
     return user;
   }
 
-  return prisma.user.update({
+  return withPrismaRetry(() => prisma.user.update({
     where: { id: user.id },
     data: { role: 'admin' },
-  });
+  }));
 };
 
 // Enhanced CORS configuration to handle different network conditions
@@ -129,10 +198,10 @@ const authenticateToken = (req, res, next) => {
 
 const requireAdmin = async (req, res, next) => {
   try {
-    const dbUser = await prisma.user.findUnique({
+    const dbUser = await withPrismaRetry(() => prisma.user.findUnique({
       where: { id: req.user.id },
       select: { id: true, email: true, role: true },
-    });
+    }));
 
     if (!dbUser) {
       return res.status(401).json({ error: 'User not found' });
@@ -171,7 +240,7 @@ app.post('/api/auth/google', async (req, res) => {
     const payload = ticket.getPayload();
     const { email, name, picture } = payload;
 
-    let user = await prisma.user.upsert({
+    let user = await withPrismaRetry(() => prisma.user.upsert({
       where: { email },
       update: {
         displayName: name,
@@ -184,7 +253,7 @@ app.post('/api/auth/google', async (req, res) => {
         photoURL: picture,
         role: isAdminEmail(email) ? 'admin' : 'user',
       },
-    });
+    }));
 
     user = await promoteConfiguredAdminIfNeeded(user);
 
@@ -216,7 +285,7 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    let user = await prisma.user.findUnique({ where: { email } });
+    let user = await withPrismaRetry(() => prisma.user.findUnique({ where: { email } }));
 
     if (!user) {
       return res.status(401).json({ error: 'No account found with this email. Please sign up first.' });
@@ -257,21 +326,21 @@ app.post('/api/auth/signup', async (req, res) => {
     }
 
     // Check if user already exists
-    const existingUser = await prisma.user.findUnique({ where: { email } });
+    const existingUser = await withPrismaRetry(() => prisma.user.findUnique({ where: { email } }));
     if (existingUser) {
       return res.status(409).json({ error: 'An account with this email already exists. Please log in.' });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const user = await prisma.user.create({
+    const user = await withPrismaRetry(() => prisma.user.create({
       data: {
         email,
         password: hashedPassword,
         displayName,
         role: isAdminEmail(email) ? 'admin' : 'user',
       }
-    });
+    }));
 
     const token = jwt.sign(
       { id: user.id, email: user.email, role: user.role },
@@ -292,7 +361,7 @@ app.post('/api/auth/signup', async (req, res) => {
 // Get current user (validate token & user still exists)
 app.get('/api/auth/me', authenticateToken, async (req, res) => {
   try {
-    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+    const user = await withPrismaRetry(() => prisma.user.findUnique({ where: { id: req.user.id } }));
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -310,10 +379,10 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
     if (age !== undefined) updateData.age = parseInt(age) || null;
     if (gender !== undefined) updateData.gender = gender || null;
 
-    const user = await prisma.user.update({
+    const user = await withPrismaRetry(() => prisma.user.update({
       where: { id: req.user.id },
       data: updateData,
-    });
+    }));
 
     res.json({ user });
   } catch (error) {
@@ -328,14 +397,14 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
 app.post('/api/results', authenticateToken, async (req, res) => {
   try {
     const { score, categoricalScores, level } = req.body;
-    const result = await prisma.testResult.create({
+    const result = await withPrismaRetry(() => prisma.testResult.create({
       data: {
         userId: req.user.id,
         score,
         categoricalScores,
         level,
       },
-    });
+    }));
     res.status(201).json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -346,13 +415,13 @@ app.post('/api/results', authenticateToken, async (req, res) => {
 app.post('/api/appointments', authenticateToken, async (req, res) => {
   try {
     const { doctorName, slot } = req.body;
-    const appointment = await prisma.appointment.create({
+    const appointment = await withPrismaRetry(() => prisma.appointment.create({
       data: {
         userId: req.user.id,
         doctorName,
         slot,
       },
-    });
+    }));
     res.status(201).json(appointment);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -363,14 +432,14 @@ app.post('/api/appointments', authenticateToken, async (req, res) => {
 app.get('/api/history', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
-    const results = await prisma.testResult.findMany({
+    const results = await withPrismaRetry(() => prisma.testResult.findMany({
       where: { userId },
       orderBy: { timestamp: 'desc' },
-    });
-    const appointments = await prisma.appointment.findMany({
+    }));
+    const appointments = await withPrismaRetry(() => prisma.appointment.findMany({
       where: { userId },
       orderBy: { timestamp: 'desc' },
-    });
+    }));
     res.json({ results, appointments });
   } catch (error) {
     console.error('History fetch error:', error);
@@ -386,11 +455,11 @@ app.get('/api/history', authenticateToken, async (req, res) => {
 
 app.get('/api/admin/overview', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const [usersCount, resultsCount, appointmentsCount] = await prisma.$transaction([
+    const [usersCount, resultsCount, appointmentsCount] = await withPrismaRetry(() => prisma.$transaction([
       prisma.user.count(),
       prisma.testResult.count(),
       prisma.appointment.count(),
-    ]);
+    ]));
 
     res.json({ usersCount, resultsCount, appointmentsCount });
   } catch (error) {
@@ -403,7 +472,7 @@ app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) =>
   try {
     const search = String(req.query.search || '').trim();
 
-    const users = await prisma.user.findMany({
+    const users = await withPrismaRetry(() => prisma.user.findMany({
       where: search
         ? {
             OR: [
@@ -429,7 +498,7 @@ app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) =>
         },
       },
       orderBy: { createdAt: 'desc' },
-    });
+    }));
 
     res.json({ users });
   } catch (error) {
@@ -442,7 +511,7 @@ app.get('/api/admin/users/:userId/history', authenticateToken, requireAdmin, asy
   try {
     const { userId } = req.params;
 
-    const user = await prisma.user.findUnique({
+    const user = await withPrismaRetry(() => prisma.user.findUnique({
       where: { id: userId },
       select: {
         id: true,
@@ -453,13 +522,13 @@ app.get('/api/admin/users/:userId/history', authenticateToken, requireAdmin, asy
         gender: true,
         createdAt: true,
       },
-    });
+    }));
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const [results, appointments] = await prisma.$transaction([
+    const [results, appointments] = await withPrismaRetry(() => prisma.$transaction([
       prisma.testResult.findMany({
         where: { userId },
         orderBy: { timestamp: 'desc' },
@@ -468,7 +537,7 @@ app.get('/api/admin/users/:userId/history', authenticateToken, requireAdmin, asy
         where: { userId },
         orderBy: { timestamp: 'desc' },
       }),
-    ]);
+    ]));
 
     res.json({ user, results, appointments });
   } catch (error) {
@@ -500,12 +569,12 @@ app.patch('/api/admin/users/:userId', authenticateToken, requireAdmin, async (re
       return res.status(400).json({ error: 'No fields provided to update' });
     }
 
-    const existingUser = await prisma.user.findUnique({ where: { id: userId } });
+    const existingUser = await withPrismaRetry(() => prisma.user.findUnique({ where: { id: userId } }));
     if (!existingUser) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const updatedUser = await prisma.user.update({
+    const updatedUser = await withPrismaRetry(() => prisma.user.update({
       where: { id: userId },
       data,
       select: {
@@ -516,7 +585,7 @@ app.patch('/api/admin/users/:userId', authenticateToken, requireAdmin, async (re
         gender: true,
         role: true,
       },
-    });
+    }));
 
     res.json({ user: updatedUser });
   } catch (error) {
@@ -540,16 +609,16 @@ app.delete('/api/admin/users/:userId', authenticateToken, requireAdmin, async (r
       return res.status(400).json({ error: 'You cannot delete your own admin account' });
     }
 
-    const existingUser = await prisma.user.findUnique({ where: { id: userId } });
+    const existingUser = await withPrismaRetry(() => prisma.user.findUnique({ where: { id: userId } }));
     if (!existingUser) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    await prisma.$transaction([
+    await withPrismaRetry(() => prisma.$transaction([
       prisma.testResult.deleteMany({ where: { userId } }),
       prisma.appointment.deleteMany({ where: { userId } }),
       prisma.user.delete({ where: { id: userId } }),
-    ]);
+    ]));
 
     res.json({ success: true });
   } catch (error) {
@@ -563,14 +632,14 @@ app.delete('/api/admin/users/:userId', authenticateToken, requireAdmin, async (r
 
 app.get('/api/admin/results', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const results = await prisma.testResult.findMany({
+    const results = await withPrismaRetry(() => prisma.testResult.findMany({
       include: {
         user: {
           select: { id: true, email: true, displayName: true },
         },
       },
       orderBy: { timestamp: 'desc' },
-    });
+    }));
 
     res.json({ results });
   } catch (error) {
@@ -582,7 +651,7 @@ app.get('/api/admin/results', authenticateToken, requireAdmin, async (req, res) 
 app.delete('/api/admin/results/:resultId', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { resultId } = req.params;
-    await prisma.testResult.delete({ where: { id: resultId } });
+    await withPrismaRetry(() => prisma.testResult.delete({ where: { id: resultId } }));
     res.json({ success: true });
   } catch (error) {
     console.error('Admin delete result error:', error);
@@ -592,14 +661,14 @@ app.delete('/api/admin/results/:resultId', authenticateToken, requireAdmin, asyn
 
 app.get('/api/admin/appointments', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const appointments = await prisma.appointment.findMany({
+    const appointments = await withPrismaRetry(() => prisma.appointment.findMany({
       include: {
         user: {
           select: { id: true, email: true, displayName: true },
         },
       },
       orderBy: { timestamp: 'desc' },
-    });
+    }));
 
     res.json({ appointments });
   } catch (error) {
@@ -618,7 +687,7 @@ app.patch('/api/admin/appointments/:appointmentId', authenticateToken, requireAd
     if (slot !== undefined) data.slot = slot;
     if (status !== undefined) data.status = status;
 
-    const appointment = await prisma.appointment.update({
+    const appointment = await withPrismaRetry(() => prisma.appointment.update({
       where: { id: appointmentId },
       data,
       include: {
@@ -626,7 +695,7 @@ app.patch('/api/admin/appointments/:appointmentId', authenticateToken, requireAd
           select: { id: true, email: true, displayName: true },
         },
       },
-    });
+    }));
 
     res.json({ appointment });
   } catch (error) {
@@ -638,7 +707,7 @@ app.patch('/api/admin/appointments/:appointmentId', authenticateToken, requireAd
 app.delete('/api/admin/appointments/:appointmentId', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { appointmentId } = req.params;
-    await prisma.appointment.delete({ where: { id: appointmentId } });
+    await withPrismaRetry(() => prisma.appointment.delete({ where: { id: appointmentId } }));
     res.json({ success: true });
   } catch (error) {
     console.error('Admin delete appointment error:', error);
@@ -676,7 +745,7 @@ app.post('/api/chat', authenticateToken, async (req, res) => {
     ];
 
     const completion = await openai.chat.completions.create({
-      model: "stepfun/step-3.5-flash:free", 
+      model: CALMBOT_MODEL,
       messages: messages,
     });
 
@@ -686,9 +755,9 @@ app.post('/api/chat', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('AI Chat Error:', error);
     if (error.status === 401 || error.status === 403 || (error.message && error.message.includes('401'))) {
-      return res.status(503).json({ error: 'AI service authentication failed. Please check your OpenRouter API key.' });
+      return res.json({ text: buildCalmBotFallbackResponse(req.body?.message), fallback: true });
     }
-    res.status(500).json({ error: 'Failed to get AI response. Please try again.' });
+    return res.json({ text: buildCalmBotFallbackResponse(req.body?.message), fallback: true });
   }
 });
 
@@ -710,9 +779,9 @@ app.post('/api/ai-analysis', authenticateToken, async (req, res) => {
     if (resultId && !forceRegenerate) {
       console.log("Checking DB for existing analysis for ID:", resultId);
       try {
-        const existingResult = await prisma.testResult.findUnique({
+        const existingResult = await withPrismaRetry(() => prisma.testResult.findUnique({
           where: { id: resultId }
-        });
+        }));
         if (existingResult?.aiAnalysis) {
           console.log("Found existing analysis in DB. Returning cached version.");
           return res.json({ analysis: existingResult.aiAnalysis, cached: true });
@@ -857,10 +926,10 @@ Generate now:`;
     if (resultId) {
       try {
         console.log("Saving new analysis to DB for ID:", resultId);
-        await prisma.testResult.update({
+        await withPrismaRetry(() => prisma.testResult.update({
           where: { id: resultId },
           data: { aiAnalysis: analysis }
-        });
+        }));
         console.log("Successfully saved analysis to DB.");
       } catch (dbSaveError) {
         console.error("Failed to save analysis to DB:", dbSaveError);
@@ -1100,7 +1169,7 @@ IMPORTANT: Return ONLY valid JSON. No extra text, no explanation, no markdown.`
 app.get('/api/health', async (req, res) => {
   try {
     // Test database connection
-    await prisma.$queryRaw`SELECT 1`;
+    await withPrismaRetry(() => prisma.$queryRaw`SELECT 1`);
     res.json({ 
       status: 'ok', 
       database: 'connected',
