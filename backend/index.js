@@ -44,6 +44,44 @@ const buildCalmBotFallbackResponse = (message) => {
   return 'I am having trouble reaching my AI service right now, but I am still here to help. Take one slow breath, describe what is bothering you in one sentence, and I will help you think it through.';
 };
 
+const buildAiAnalysisFallback = (score, categoricalScores, level, highestStressArea, secondHighestArea) => {
+  return `🌱 Personalized tips for your ${level} stress
+
+📊 Your highest stress area: ${highestStressArea.name}
+
+1️⃣ Focus on ${highestStressArea.name} Management
+
+Step 1: Identify the primary concern in this area
+Step 2: Break it into smaller, manageable tasks
+Step 3: Take action on one small task today
+
+2️⃣ Address ${secondHighestArea.name} Challenges
+
+Step 1: Acknowledge the stress in this area
+Step 2: List 3 small improvements you could make
+Step 3: Pick the easiest one to implement this week
+
+3️⃣ Daily Mindfulness Practice
+
+Step 1: Spend 5 minutes in deep breathing (inhale for 4, hold for 4, exhale for 6)
+Step 2: Write down 3 things you're grateful for
+Step 3: Share one positive thought with someone you trust
+
+4️⃣ Build Resilience with ${level} Stress
+
+Step 1: Prioritize 7-8 hours of quality sleep tonight
+Step 2: Move your body for 20 minutes - walk, stretch, or dance
+Step 3: Set one boundary today to protect your peace
+
+5️⃣ Self-Care & Support
+
+Step 1: Schedule time with someone who makes you feel heard
+Step 2: Do one activity purely for enjoyment today
+Step 3: Be kind to yourself - progress over perfection
+
+💪 Remember: Small steps lead to big changes!`
+};
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const isRecoverablePrismaError = (error) => {
@@ -1007,17 +1045,44 @@ Generate now:`;
       });
     } catch (aiError) {
       console.error('OpenRouter API Error:', aiError);
-      return res.status(503).json({ 
-        error: 'AI service temporarily unavailable. Please try again later.',
-        details: aiError.message
-      });
+      console.log('Using fallback AI analysis due to API error');
+      
+      const analysis = buildAiAnalysisFallback(score, categoricalScores, level, highestStressArea, secondHighestArea);
+      
+      // Still try to save to DB if resultId is provided
+      if (resultId) {
+        try {
+          await withPrismaRetry(() => prisma.testResult.update({
+            where: { id: resultId },
+            data: { aiAnalysis: analysis }
+          }));
+        } catch (dbSaveError) {
+          console.error("Failed to save fallback analysis to DB:", dbSaveError);
+        }
+      }
+      
+      return res.json({ analysis, cached: false, fallback: true });
     }
 
     const analysis = completion?.choices?.[0]?.message?.content;
     
     if (!analysis || analysis.trim() === '') {
-      console.error('AI returned empty response');
-      return res.status(503).json({ error: 'AI returned empty response. Please try again.' });
+      console.error('AI returned empty response, using fallback');
+      const fallbackAnalysis = buildAiAnalysisFallback(score, categoricalScores, level, highestStressArea, secondHighestArea);
+      
+      // Try to save fallback to DB
+      if (resultId) {
+        try {
+          await withPrismaRetry(() => prisma.testResult.update({
+            where: { id: resultId },
+            data: { aiAnalysis: fallbackAnalysis }
+          }));
+        } catch (dbSaveError) {
+          console.error("Failed to save fallback analysis to DB:", dbSaveError);
+        }
+      }
+      
+      return res.json({ analysis: fallbackAnalysis, cached: false, fallback: true });
     }
 
     // Save to DB if resultId is provided
@@ -1038,9 +1103,24 @@ Generate now:`;
     res.json({ analysis, cached: false });
   } catch (error) {
     console.error('AI Analysis Error:', error);
-    if (error.status === 401 || error.status === 403 || (error.message && error.message.includes('401'))) {
-      return res.status(503).json({ error: 'AI service authentication failed. Please check your OpenRouter API key.' });
+    
+    // Return fallback analysis even on error
+    try {
+      const { score, categoricalScores, level } = req.body;
+      if (score !== undefined && categoricalScores && level) {
+        const categories = [
+          { name: 'Medical/Health', score: categoricalScores.medical, max: 20 },
+          { name: 'Financial', score: categoricalScores.financial, max: 20 },
+          { name: 'Relationship', score: categoricalScores.relationship, max: 20 }
+        ];
+        const sortedCategories = [...categories].sort((a, b) => b.score - a.score);
+        const fallbackAnalysis = buildAiAnalysisFallback(score, categoricalScores, level, sortedCategories[0], sortedCategories[1]);
+        return res.json({ analysis: fallbackAnalysis, cached: false, fallback: true, error: 'Using fallback analysis due to service issues' });
+      }
+    } catch (fallbackError) {
+      console.error('Fallback analysis generation also failed:', fallbackError);
     }
+    
     res.status(500).json({ error: 'Failed to generate AI analysis. Please try again.' });
   }
 });
