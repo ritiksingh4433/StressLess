@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { LogIn, Mail, Lock, Loader2 } from 'lucide-react';
 import { GoogleLogin } from '@react-oauth/google';
+import { getGoogleClientId } from '../utils/googleConfig';
 
 const Login = ({ onNavigate, onLoginSuccess }) => {
   const [email, setEmail] = useState('');
@@ -9,7 +10,7 @@ const Login = ({ onNavigate, onLoginSuccess }) => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { login, loginWithGoogle } = useAuth();
-  const hasGoogleClientId = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID);
+  const hasGoogleClientId = Boolean(getGoogleClientId());
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -123,7 +124,7 @@ const Login = ({ onNavigate, onLoginSuccess }) => {
         </div>
       ) : (
         <p className="mt-6 text-center text-xs text-slate-500 dark:text-slate-400">
-          Google Sign-In is currently unavailable. Please use email/password login.
+          Google Sign-In is unavailable because the Google OAuth provider is not configured in this build.
         </p>
       )}
 

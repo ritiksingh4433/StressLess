@@ -95,8 +95,37 @@ VITE_GOOGLE_CLIENT_ID=your-google-client-id
 DATABASE_URL=postgresql://user:password@localhost:5432/stressless
 JWT_SECRET=your-jwt-secret
 GOOGLE_CLIENT_ID=your-google-client-id
+GOOGLE_CLIENT_IDS=your-google-client-id
+FRONTEND_URL=https://your-live-frontend-domain
+FRONTEND_URLS=https://your-live-frontend-domain
 OPENROUTER_API_KEY=your-openrouter-api-key
 ```
+
+### Production Deployment Checklist
+
+Use these values for the live StressLess deployment:
+
+#### Frontend host
+```env
+VITE_API_URL=https://stressless.onrender.com/api
+VITE_GOOGLE_CLIENT_ID=941813256456-k6uonsb8qmrqj7q2uql3r3njl23e0qpj.apps.googleusercontent.com
+```
+
+#### Backend host
+```env
+DATABASE_URL=your-production-neon-url
+JWT_SECRET=use-a-long-random-secret
+GOOGLE_CLIENT_ID=941813256456-k6uonsb8qmrqj7q2uql3r3njl23e0qpj.apps.googleusercontent.com
+GOOGLE_CLIENT_IDS=941813256456-k6uonsb8qmrqj7q2uql3r3njl23e0qpj.apps.googleusercontent.com
+FRONTEND_URL=https://stress-less-omega.vercel.app
+FRONTEND_URLS=https://stress-less-omega.vercel.app
+OPENROUTER_API_KEY=your-openrouter-api-key
+```
+
+#### Google Cloud Console
+- Add `https://stress-less-omega.vercel.app` to Authorized JavaScript origins.
+- Add `http://localhost:5173` to Authorized JavaScript origins for local development.
+- Make sure the Web OAuth client ID matches the frontend and backend values above.
 
 ### Installation
 

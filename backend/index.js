@@ -116,6 +116,40 @@ const isUuid = (value) =>
   typeof value === 'string' &&
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 
+const verifyGoogleIdTokenPayload = async (idToken) => {
+  const ticket = await googleClient.verifyIdToken({ idToken });
+  const payload = ticket.getPayload();
+
+  if (!payload) {
+    const err = new Error('Empty Google token payload');
+    err.code = 'GOOGLE_EMPTY_PAYLOAD';
+    throw err;
+  }
+
+  const issuer = String(payload.iss || '');
+  const allowedIssuers = new Set(['accounts.google.com', 'https://accounts.google.com']);
+  if (!allowedIssuers.has(issuer)) {
+    const err = new Error(`Unexpected token issuer: ${issuer}`);
+    err.code = 'GOOGLE_INVALID_ISSUER';
+    throw err;
+  }
+
+  const aud = String(payload.aud || '').trim();
+  const azp = String(payload.azp || '').trim();
+  const tokenAudiences = [aud, azp].filter(Boolean);
+
+  if (configuredGoogleClientIds.length > 0) {
+    const audienceMatch = tokenAudiences.some((candidate) => configuredGoogleClientIds.includes(candidate));
+    if (!audienceMatch) {
+      const err = new Error(`Google token audience mismatch. aud=${aud || 'n/a'} azp=${azp || 'n/a'}`);
+      err.code = 'GOOGLE_AUDIENCE_MISMATCH';
+      throw err;
+    }
+  }
+
+  return payload;
+};
+
 const promoteConfiguredAdminIfNeeded = async (user) => {
   if (!user || !isAdminEmail(user.email) || user.role === 'admin') {
     return user;
@@ -239,11 +273,7 @@ app.post('/api/auth/google', async (req, res) => {
       return res.status(400).json({ error: 'idToken is required' });
     }
 
-    const ticket = await googleClient.verifyIdToken({
-      idToken,
-      audience: configuredGoogleClientIds,
-    });
-    const payload = ticket.getPayload();
+    const payload = await verifyGoogleIdTokenPayload(idToken);
     const { email, name, picture } = payload;
 
     if (!email) {
@@ -290,6 +320,16 @@ app.post('/api/auth/google', async (req, res) => {
       return res.status(401).json({
         error: 'This domain is not authorized for Google Sign-In. Add your live frontend URL to Google OAuth Authorized JavaScript origins.',
       });
+    }
+
+    if (code === 'GOOGLE_AUDIENCE_MISMATCH') {
+      return res.status(401).json({
+        error: 'Google client ID mismatch. Ensure frontend VITE_GOOGLE_CLIENT_ID and backend GOOGLE_CLIENT_ID/GOOGLE_CLIENT_IDS match.',
+      });
+    }
+
+    if (code === 'GOOGLE_INVALID_ISSUER' || code === 'GOOGLE_EMPTY_PAYLOAD') {
+      return res.status(401).json({ error: 'Invalid Google token issuer or payload.' });
     }
 
     if (message.includes('Wrong recipient') || message.includes('audience')) {
