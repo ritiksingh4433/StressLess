@@ -116,7 +116,7 @@ const HomePage = ({ onStartTest }) => {
               {
                 icon: <BarChart3 className="text-yellow-400" size={40} />,
                 title: "Get Your Score",
-                desc: "Your answers generate a stress score from 0-40, identifying your current stress level category."
+                desc: "Your answers generate a stress score from 0-60, identifying your current stress level category."
               },
               {
                 icon: <Lightbulb className="text-pink-400" size={40} />,

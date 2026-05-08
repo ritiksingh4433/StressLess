@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext';
 const doctors = [
   {
     id: 1,
-    name: "Dr. Sarah Jenkins",
+    name: "Dr. Kavya Singh",
     specialty: "Psychologist",
     expertise: "Anxiety & Stress Management",
     image: "https://images.unsplash.com/photo-1559839734-2b71f153678f?auto=format&fit=crop&q=80&w=200&h=200",
@@ -16,7 +16,7 @@ const doctors = [
   },
   {
     id: 2,
-    name: "Dr. Michael Chen",
+    name: "Dr. Rahul Shrivastva",
     specialty: "Psychiatrist",
     expertise: "Mood Disorders & Depression",
     image: "https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?auto=format&fit=crop&q=80&w=200&h=200",
@@ -26,7 +26,7 @@ const doctors = [
   },
   {
     id: 3,
-    name: "Dr. Emily Rodriguez",
+    name: "Dr. Kritika Mehta",
     specialty: "Clinical Therapist",
     expertise: "CBT & Mindfulness",
     image: "https://images.unsplash.com/photo-1594824476967-48c8b964273f?auto=format&fit=crop&q=80&w=200&h=200",
@@ -36,7 +36,7 @@ const doctors = [
   },
   {
     id: 4,
-    name: "Dr. David Wilson",
+    name: "Dr. Devendra Soni",
     specialty: "Mental Health Counselor",
     expertise: "Work-Life Balance & Burnout",
     image: "https://images.unsplash.com/photo-1622253692010-333f2da6031d?auto=format&fit=crop&q=80&w=200&h=200",

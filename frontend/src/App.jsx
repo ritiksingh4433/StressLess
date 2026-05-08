@@ -14,6 +14,10 @@ import Dashboard from './components/Dashboard';
 import ChatBot from './components/ChatBot';
 import UserIntake from './components/UserIntake';
 import AdminPanel from './components/AdminPanel';
+import Contact from './components/Contact';
+import Mail from './components/Mail';
+import Privacy from './components/Privacy';
+import Terms from './components/Terms';
 import { AuthProvider, useAuth } from './context/AuthContext';
 
 const AppContent = () => {
@@ -390,6 +394,18 @@ const AppContent = () => {
       case 'about':
         return <About />;
 
+      case 'contact':
+        return <Contact onBackHome={() => setCurrentPage('home')} onNavigate={handleNavigate} />;
+
+      case 'mail':
+        return <Mail onBack={() => setCurrentPage('home')} />;
+
+      case 'privacy':
+        return <Privacy onBackHome={() => setCurrentPage('home')} />;
+
+      case 'terms':
+        return <Terms onBackHome={() => setCurrentPage('home')} />;
+
       case 'login':
         return <Login onNavigate={handleNavigate} onLoginSuccess={handleLoginSuccess} />;
 
@@ -438,7 +454,7 @@ const AppContent = () => {
           </AnimatePresence>
         </main>
 
-        <Footer />
+        <Footer onNavigate={handleNavigate} />
         <ChatBot />
       </div>
     </div>
