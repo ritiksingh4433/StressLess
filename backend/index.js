@@ -7,6 +7,7 @@ const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 const OpenAI = require('openai');
 const bcrypt = require('bcryptjs');
+const nodemailer = require('nodemailer');
 
 dotenv.config({ path: path.join(__dirname, '.env') });
 
@@ -1359,6 +1360,91 @@ app.get('/api/health', async (req, res) => {
       database: 'disconnected',
       error: error.message
     });
+  }
+});
+
+// Contact/Mail Endpoint
+app.post('/api/contact/send-mail', async (req, res) => {
+  try {
+    const { name, email, subject, message } = req.body;
+
+    console.log('📧 Contact form submission received:', { name, email, subject });
+
+    // Validation
+    if (!name || !email || !subject || !message) {
+      console.warn('❌ Missing required fields');
+      return res.status(400).json({ message: 'All fields are required' });
+    }
+
+    // Email regex validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      console.warn('❌ Invalid email format:', email);
+      return res.status(400).json({ message: 'Invalid email address' });
+    }
+
+    // Check if email credentials are configured
+    if (!process.env.EMAIL_SERVICE || !process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+      console.warn('❌ Email configuration missing in environment variables');
+      console.log('EMAIL_SERVICE:', process.env.EMAIL_SERVICE ? 'configured' : 'missing');
+      console.log('EMAIL_USER:', process.env.EMAIL_USER ? 'configured' : 'missing');
+      console.log('EMAIL_PASS:', process.env.EMAIL_PASS ? 'configured' : 'missing');
+      return res.status(500).json({ message: 'Email service not configured' });
+    }
+
+    try {
+      console.log(`🔧 Creating nodemailer transporter for ${process.env.EMAIL_SERVICE}...`);
+      
+      const transporter = nodemailer.createTransport({
+        service: process.env.EMAIL_SERVICE,
+        auth: {
+          user: process.env.EMAIL_USER,
+          pass: process.env.EMAIL_PASS,
+        }
+      });
+
+      // Verify connection
+      console.log('🔍 Verifying SMTP connection...');
+      await transporter.verify();
+      console.log('✅ SMTP connection verified!');
+
+      const mailOptions = {
+        from: process.env.EMAIL_USER,
+        to: process.env.EMAIL_USER,
+        replyTo: email,
+        subject: `Contact Form: ${subject}`,
+        html: `
+          <h2>New Contact Message from StressLess</h2>
+          <p><strong>From:</strong> ${name}</p>
+          <p><strong>Email:</strong> <a href="mailto:${email}">${email}</a></p>
+          <p><strong>Subject:</strong> ${subject}</p>
+          <hr>
+          <h3>Message:</h3>
+          <p>${message.replace(/\n/g, '<br>')}</p>
+        `
+      };
+
+      console.log(`📤 Sending email to ${process.env.EMAIL_USER}...`);
+      const info = await transporter.sendMail(mailOptions);
+      console.log(`✉️ Email sent successfully! Message ID: ${info.messageId}`);
+
+      res.json({ 
+        message: 'Message sent successfully! We will respond to you soon.',
+        success: true 
+      });
+    } catch (mailError) {
+      console.error('❌ Email sending failed:', mailError);
+      console.error('Error code:', mailError.code);
+      console.error('Error response:', mailError.response);
+      
+      res.status(500).json({ 
+        message: `Failed to send email: ${mailError.message}`,
+        error: process.env.NODE_ENV === 'development' ? mailError.message : 'Email service error'
+      });
+    }
+  } catch (error) {
+    console.error('❌ Contact endpoint error:', error);
+    res.status(500).json({ message: 'Failed to process contact request' });
   }
 });
 
