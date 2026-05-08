@@ -152,7 +152,7 @@ const Contact = ({ onBackHome, onNavigate }) => {
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
             <button
-              onClick={() => (onNavigate ? onNavigate('mail') : window.location.href = 'mailto:singhritik4433@gmail.com')}
+              onClick={() => (onNavigate ? onNavigate('mail') : window.location.href = 'mailto:singhritik7605@gmail.com')}
               className="px-6 py-3 bg-yellow-500 text-white font-bold rounded-lg hover:bg-yellow-600 transition-colors text-center"
             >
               Email Us
